@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MinIO Admin</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+      body { font-family: -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif; }
+      [x-cloak] { display: none !important; }
+  </style>
+</head>
+<body class="bg-neutral-950 text-neutral-200 min-h-screen">
+<div class="max-w-5xl mx-auto px-6 py-10">
+
+  <!-- Header -->
+  <header class="flex items-center justify-between mb-10">
+    <div>
+      <h1 class="text-2xl font-semibold text-neutral-100">MinIO Admin</h1>
+      <p id="breadcrumb" class="text-sm text-neutral-500 mt-1">Buckets</p>
+    </div>
+    <button id="backBtn" class="hidden text-sm text-neutral-400 hover:text-neutral-100 transition">
+      &larr; Back
+    </button>
+  </header>
+
+  <!-- Toast -->
+  <div id="toast" class="fixed top-6 right-6 hidden px-4 py-3 rounded-lg text-sm shadow-lg z-50"></div>
+
+  <!-- Bucket list view -->
+  <section id="bucketsView">
+    <div class="flex gap-2 mb-6">
+      <input id="newBucketName" placeholder="new-bucket-name"
+             class="flex-1 bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-neutral-600" />
+      <button id="createBucketBtn"
+              class="bg-neutral-100 text-neutral-900 px-4 py-2 rounded-lg text-sm font-medium hover:bg-white transition">
+        Create bucket
+      </button>
+    </div>
+
+    <div id="bucketsList" class="space-y-2">
+      <p class="text-neutral-500 text-sm">Loading...</p>
+    </div>
+  </section>
+
+  <!-- Objects view -->
+  <section id="objectsView" class="hidden">
+    <div class="flex gap-2 mb-6">
+      <label class="flex-1 bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-2 text-sm cursor-pointer hover:border-neutral-600 transition flex items-center justify-center text-neutral-400">
+        <input type="file" id="fileInput" class="hidden" />
+        <span id="fileLabel">Choose file to upload...</span>
+      </label>
+      <button id="uploadBtn"
+              class="bg-neutral-100 text-neutral-900 px-4 py-2 rounded-lg text-sm font-medium hover:bg-white transition disabled:opacity-40">
+        Upload
+      </button>
+    </div>
+
+    <div id="objectsList" class="space-y-2"></div>
+  </section>
+
+</div>
+
+<script>
+  // --- State ---
+  let currentBucket = null;
+
+  // --- Helpers ---
+  const $ = (id) => document.getElementById(id);
+
+  function toast(message, type = "info") {
+    const el = $("toast");
+    const colors = {
+      info: "bg-neutral-800 text-neutral-100",
+      success: "bg-emerald-900 text-emerald-100",
+      error: "bg-red-900 text-red-100",
+    };
+    el.className = `fixed top-6 right-6 px-4 py-3 rounded-lg text-sm shadow-lg z-50 ${colors[type]}`;
+    el.textContent = message;
+    el.classList.remove("hidden");
+    setTimeout(() => el.classList.add("hidden"), 3000);
+  }
+
+  async function api(path, options = {}) {
+    const res = await fetch(path, {
+      ...options,
+      headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(data.error || "Request failed");
+    }
+    return res.status === 204 ? null : res.json();
+  }
+
+  function policyBadge(level) {
+    const styles = {
+      none: "bg-neutral-800 text-neutral-400",
+      download: "bg-blue-950 text-blue-300",
+      upload: "bg-amber-950 text-amber-300",
+      public: "bg-emerald-950 text-emerald-300",
+      custom: "bg-purple-950 text-purple-300",
+    };
+    return `<span class="text-xs px-2 py-0.5 rounded ${styles[level] || styles.custom}">${level}</span>`;
+  }
+
+  function formatSize(bytes) {
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1024 ** 2) return (bytes / 1024).toFixed(1) + " KiB";
+    if (bytes < 1024 ** 3) return (bytes / 1024 ** 2).toFixed(1) + " MiB";
+    return (bytes / 1024 ** 3).toFixed(2) + " GiB";
+  }
+
+  // --- Bucket operations ---
+  async function loadBuckets() {
+    try {
+      const buckets = await api("/api/buckets");
+      const container = $("bucketsList");
+      if (!buckets.length) {
+        container.innerHTML = `<p class="text-neutral-500 text-sm">No buckets yet.</p>`;
+        return;
+      }
+      container.innerHTML = buckets.map((b) => `
+          <div class="bg-neutral-900 border border-neutral-800 rounded-lg p-4 flex items-center justify-between hover:border-neutral-700 transition">
+            <div class="flex-1 cursor-pointer" onclick="openBucket('${b.name}')">
+              <div class="flex items-center gap-2">
+                <span class="font-medium text-neutral-100">${b.name}</span>
+                ${policyBadge(b.policy)}
+              </div>
+              <p class="text-xs text-neutral-500 mt-1">${new Date(b.createdAt).toLocaleString()}</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <select onchange="changePolicy('${b.name}', this.value)"
+                class="bg-neutral-950 border border-neutral-800 text-sm rounded px-2 py-1 focus:outline-none focus:border-neutral-600">
+                ${["none", "download", "upload", "public"].map(l =>
+        `<option value="${l}" ${b.policy === l ? "selected" : ""}>${l}</option>`
+      ).join("")}
+              </select>
+              <button onclick="deleteBucket('${b.name}')"
+                class="text-red-400 hover:text-red-300 text-sm px-2">Delete</button>
+            </div>
+          </div>
+        `).join("");
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  }
+
+  async function createBucket() {
+    const name = $("newBucketName").value.trim();
+    if (!name) return toast("Name required", "error");
+    try {
+      await api("/api/buckets", { method: "POST", body: JSON.stringify({ name }) });
+      $("newBucketName").value = "";
+      toast("Bucket created", "success");
+      loadBuckets();
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  }
+
+  async function deleteBucket(name) {
+    const force = confirm(`Delete bucket "${name}"?\n\nOK = force delete (removes all objects)\nCancel = abort`);
+    if (!force) return;
+    try {
+      await api(`/api/buckets/${encodeURIComponent(name)}?force=true`, { method: "DELETE" });
+      toast("Bucket deleted", "success");
+      loadBuckets();
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  }
+
+  async function changePolicy(name, level) {
+    try {
+      await api(`/api/buckets/${encodeURIComponent(name)}/policy`, {
+        method: "PUT",
+        body: JSON.stringify({ level }),
+      });
+      toast(`Policy set to ${level}`, "success");
+      loadBuckets();
+    } catch (err) {
+      toast(err.message, "error");
+      loadBuckets();
+    }
+  }
+
+  // --- Object operations ---
+  async function openBucket(name) {
+    currentBucket = name;
+    $("bucketsView").classList.add("hidden");
+    $("objectsView").classList.remove("hidden");
+    $("backBtn").classList.remove("hidden");
+    $("breadcrumb").textContent = `Buckets / ${name}`;
+    loadObjects();
+  }
+
+  function closeBucket() {
+    currentBucket = null;
+    $("bucketsView").classList.remove("hidden");
+    $("objectsView").classList.add("hidden");
+    $("backBtn").classList.add("hidden");
+    $("breadcrumb").textContent = "Buckets";
+    loadBuckets();
+  }
+
+  async function loadObjects() {
+    try {
+      const objects = await api(`/api/buckets/${encodeURIComponent(currentBucket)}/objects`);
+      const container = $("objectsList");
+      if (!objects.length) {
+        container.innerHTML = `<p class="text-neutral-500 text-sm">Empty bucket.</p>`;
+        return;
+      }
+      container.innerHTML = objects.map((o) => `
+          <div class="bg-neutral-900 border border-neutral-800 rounded-lg p-3 flex items-center justify-between hover:border-neutral-700 transition">
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-mono text-neutral-100 truncate">${o.name}</p>
+              <p class="text-xs text-neutral-500 mt-0.5">${formatSize(o.size)} · ${new Date(o.lastModified).toLocaleString()}</p>
+            </div>
+            <button onclick="deleteObject('${encodeURIComponent(o.name)}')"
+              class="text-red-400 hover:text-red-300 text-sm px-2 ml-3">Delete</button>
+          </div>
+        `).join("");
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  }
+
+  async function uploadFile() {
+    const file = $("fileInput").files[0];
+    if (!file) return toast("Pick a file first", "error");
+    const formData = new FormData();
+    formData.append("file", file);
+    try {
+      const res = await fetch(`/api/buckets/${encodeURIComponent(currentBucket)}/objects`, {
+        method: "POST",
+        body: formData,
+      });
+      if (!res.ok) throw new Error((await res.json()).error || "Upload failed");
+      toast("Uploaded", "success");
+      $("fileInput").value = "";
+      $("fileLabel").textContent = "Choose file to upload...";
+      loadObjects();
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  }
+
+  async function deleteObject(encodedKey) {
+    if (!confirm(`Delete "${decodeURIComponent(encodedKey)}"?`)) return;
+    try {
+      await api(`/api/buckets/${encodeURIComponent(currentBucket)}/objects/${encodedKey}`, {
+        method: "DELETE",
+      });
+      toast("Object deleted", "success");
+      loadObjects();
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  }
+
+  // --- Events ---
+  $("createBucketBtn").addEventListener("click", createBucket);
+  $("newBucketName").addEventListener("keydown", (e) => e.key === "Enter" && createBucket());
+  $("uploadBtn").addEventListener("click", uploadFile);
+  $("backBtn").addEventListener("click", closeBucket);
+  $("fileInput").addEventListener("change", (e) => {
+    const f = e.target.files[0];
+    $("fileLabel").textContent = f ? f.name : "Choose file to upload...";
+  });
+
+  // --- Init ---
+  loadBuckets();
+</script>
+</body>
+</html>

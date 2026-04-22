@@ -1,0 +1,20 @@
+services:
+  minio-admin:
+    build: .
+    restart: unless-stopped
+    environment:
+      - PORT=3000
+      - ADMIN_USER=${ADMIN_USER}
+      - ADMIN_PASS=${ADMIN_PASS}
+      - MINIO_ENDPOINT=minio
+      - MINIO_PORT=9000
+      - MINIO_USE_SSL=false
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+    networks:
+      - minio-network
+
+networks:
+  minio-network:
+    name: diw3705hf6oih57369f63mly
+    external: true

@@ -1,0 +1,16 @@
+{
+  "name": "minio-admin",
+  "version": "1.0.0",
+  "description": "Minimal MinIO admin panel",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "express-basic-auth": "^1.2.1",
+    "minio": "^8.0.5",
+    "multer": "^2.1.1"
+  }
+}
